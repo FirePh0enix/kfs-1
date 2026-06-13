@@ -13,6 +13,7 @@ static void write_int(long i) {
   n = 0;
   if (i == 0) {
     buf[0] = '0';
+    len++;
   }
   num = i;
   if (i < 0)
@@ -23,7 +24,8 @@ static void write_int(long i) {
     num /= 10;
   }
 
-  terminal_printn(buf, len);
+  for (int i = 0; i < len; i++)
+    terminal_printn(&buf[len - i - 1], len);
 }
 
 void ft_printf(const char *fmt, ...) {

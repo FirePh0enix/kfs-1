@@ -59,13 +59,35 @@ static int screen_id = 0;
 static u16 fg_color = COLOR_LIGHT_GREY;
 static u16 bg_color = COLOR_BLACK;
 
+void outb(u16 port, u8 value) {
+  asm volatile("outb %b0, %w1" ::"a"(value), "Nd"(port) : "memory");
+}
+
+u16 inb(u16 port) {
+  u8 value;
+  asm volatile("inb %w1, %b0" : "=a"(value) : "Nd"(port) : "memory");
+  return value;
+}
+
+void terminal_scroll() {
+  for (int i = 80; i < 80 * 24; i++) {
+    screens[screen_id].buffer[i - 80] = screens[screen_id].buffer[i];
+  }
+  for (int i = 0; i < 80; i++) {
+    screens[screen_id].buffer[i + 23 * 80] =
+        VGA_ENTRY(' ', VGA_COLOR(bg_color, fg_color));
+  }
+}
+
 void terminal_printn(const char *s, int n) {
   int i = 0;
   while (i < n) {
     if (s[i] == '\n') {
       screens[screen_id].x = 0;
       if (++screens[screen_id].y >= 24) {
-        // TODO: Scroll the text
+        terminal_scroll();
+        screens[screen_id].y = 23;
+        screens[screen_id].x = 0;
       }
     } else {
       screens[screen_id]
@@ -75,7 +97,9 @@ void terminal_printn(const char *s, int n) {
       if (++screens[screen_id].x >= 80) {
         screens[screen_id].x = 0;
         if (++screens[screen_id].y >= 24) {
-          // TODO: Scroll the text
+          terminal_scroll();
+          screens[screen_id].y = 23;
+          screens[screen_id].x = 0;
         }
       }
     }
@@ -88,6 +112,58 @@ void terminal_print(const char *s) {
   while (s[n])
     n++;
   terminal_printn(s, n);
+}
+
+void terminal_enable_cursor(u8 cursor_start, u8 cursor_end) {
+  outb(0x3D4, 0x0A);
+  outb(0x3D5, (inb(0x3D5) & 0xC0) | cursor_start);
+
+  outb(0x3D4, 0x0B);
+  outb(0x3D5, (inb(0x3D5) & 0xE0) | cursor_end);
+}
+
+void terminal_set_cursor(int x, int y) {
+  u16 pos = y * 80 + x;
+
+  outb(0x3D4, 0x0F);
+  outb(0x3D5, (u8)(pos & 0xFF));
+  outb(0x3D4, 0x0E);
+  outb(0x3D5, (u8)((pos >> 8) & 0xFF));
+}
+
+static int write_int(long i, int x) {
+  // int n;
+  // char buf[32];
+  // long num;
+  // long len;
+  // long len2;
+
+  // n = 0;
+  // if (i == 0) {
+  //   buf[0] = '0';
+  //   len++;
+  // }
+  // num = i;
+  // if (i < 0)
+  //   num = -i;
+  // len = 0;
+  // while (num > 0) {
+  //   buf[len++] = "0123456789abcdef"[num % 10];
+  //   num /= 10;
+  // }
+
+  if (i < 10) {
+    fb[x + 24 * 80] = VGA_ENTRY('0', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+    fb[1 + x + 24 * 80] =
+        VGA_ENTRY('0' + i, VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  } else {
+    fb[x + 24 * 80] =
+        VGA_ENTRY('0' + (i / 10), VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+    fb[1 + x + 24 * 80] =
+        VGA_ENTRY('0' + (i % 10), VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  }
+
+  return 2;
 }
 
 void terminal_flush(int min_x, int max_x, int min_y, int max_y) {
@@ -106,6 +182,43 @@ void terminal_flush(int min_x, int max_x, int min_y, int max_y) {
   for (; c < 80; c++) {
     fb[c + 24 * 80] = VGA_ENTRY(' ', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
   }
+
+  int color = 0;
+  for (c = 20; c < 20 + 15 * 2; c += 2) {
+    fb[c + 24 * 80] = VGA_ENTRY(' ', VGA_COLOR(color, COLOR_BLACK));
+    fb[c + 1 + 24 * 80] = VGA_ENTRY(' ', VGA_COLOR(color, COLOR_BLACK));
+    color += 1;
+  }
+
+  c += 4;
+
+  fb[(c++) + 24 * 80] =
+      VGA_ENTRY('R', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  fb[(c++) + 24 * 80] =
+      VGA_ENTRY('O', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  fb[(c++) + 24 * 80] =
+      VGA_ENTRY('W', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  c++;
+
+  c += write_int(screens[screen_id].y, c);
+  c++;
+
+  fb[(c++) + 24 * 80] =
+      VGA_ENTRY('C', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  fb[(c++) + 24 * 80] =
+      VGA_ENTRY('O', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  fb[(c++) + 24 * 80] =
+      VGA_ENTRY('L', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  c++;
+
+  c += write_int(screens[screen_id].x, c);
+
+  // c += write_int(screens[screen_id].x, c);
+  // fb[c + 24 * 80] = VGA_ENTRY(':', VGA_COLOR(color, COLOR_BLACK));
+  // c += 1;
+  // c += write_int(screens[screen_id].y, c);
+
+  terminal_set_cursor(screens[screen_id].x, screens[screen_id].y);
 }
 
 void terminal_full_flush() { terminal_flush(0, 80, 0, 24); }
@@ -124,16 +237,6 @@ typedef struct __attribute__((packed)) idtp_s {
   u16 limit;
   u32 base;
 } idtp_t;
-
-void outb(u16 port, u8 value) {
-  asm volatile("outb %b0, %w1" ::"a"(value), "Nd"(port) : "memory");
-}
-
-u16 inb(u16 port) {
-  u8 value;
-  asm volatile("inb %w1, %b0" : "=a"(value) : "Nd"(port) : "memory");
-  return value;
-}
 
 extern void int_handler();
 
@@ -213,6 +316,7 @@ void kernel_main() {
   ints_init();
 
   // clear the terminal
+  terminal_enable_cursor(0, 15);
   terminal_full_flush();
 
   // enable interrupts

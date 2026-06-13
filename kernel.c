@@ -1,3 +1,7 @@
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+
 enum vga_color {
   COLOR_BLACK = 0,
   COLOR_BLUE = 1,
@@ -18,30 +22,204 @@ enum vga_color {
 };
 
 #define VGA_COLOR(BG, FG) ((FG) | ((BG) << 4))
-#define VGA_ENTRY(CHAR, COLOR)                                                 \
-  ((unsigned short)(CHAR) | (unsigned short)((COLOR) << 8))
+#define VGA_ENTRY(CHAR, COLOR) ((u16)(CHAR) | (u16)((COLOR) << 8))
 
-static unsigned short *fb = (unsigned short *)0xB8000;
-static int x = 0;
-static int y = 0;
-static unsigned short fg_color = COLOR_LIGHT_GREY;
-static unsigned short bg_color = COLOR_BLACK;
+static u8 scancode_table[0x59] = {
+    0,    0,                                             // null, escape
+    '1',  '2', '3',  '4',  '5', '6', '7', '8', '9', '0', // nums
+    '-',  '=', '\b', '\t',                               //
+    'q',  'w', 'e',  'r',  't', 'y', 'u', 'i', 'o', 'p', '[',  ']', //
+    '\n', 0, // enter, left control
+    'a',  's', 'd',  'f',  'g', 'h', 'j', 'k', 'l', ';', '\'', '`', //
+    0, // left shift
+    '\\', 'z', 'x',  'c',  'v', 'b', 'n', 'm', ',', '.', '/',
+    0,                                                 // right shift
+    '*',                                               //
+    0,                                                 //
+    ' ',                                               //
+    0,                                                 // caps lock
+    0,    0,   0,    0,    0,   0,   0,   0,   0,   0, // F1-10
+    0,    0,                                           // num lock, scroll lock
+    '7',  '8', '9',  '-',  '4', '5', '6', '+', '1', '2', '3',  '0',
+    '.',          // keypad
+    0,    0,   0, // ?
+    0,    0,      // F11, F12
+};
 
-static void terminal_print(const char *s) {
-  while (*s) {
-    fb[x + y * 80] = VGA_ENTRY(*s, VGA_COLOR(bg_color, fg_color));
-    if (++x >= 80) {
-      x = 0;
-      if (++y >= 25) {
+typedef struct screen_s {
+  int x;
+  int y;
+  u16 buffer[80 * 24];
+} screen_t;
+
+screen_t screens[9];
+
+static u16 *fb = (u16 *)0xB8000;
+static int screen_id = 0;
+static u16 fg_color = COLOR_LIGHT_GREY;
+static u16 bg_color = COLOR_BLACK;
+
+void terminal_printn(const char *s, int n) {
+  int i = 0;
+  while (i < n) {
+    if (s[i] == '\n') {
+      screens[screen_id].x = 0;
+      if (++screens[screen_id].y >= 24) {
         // TODO: Scroll the text
       }
+    } else {
+      screens[screen_id]
+          .buffer[screens[screen_id].x + screens[screen_id].y * 80] =
+          VGA_ENTRY(s[i], VGA_COLOR(bg_color, fg_color));
+
+      if (++screens[screen_id].x >= 80) {
+        screens[screen_id].x = 0;
+        if (++screens[screen_id].y >= 24) {
+          // TODO: Scroll the text
+        }
+      }
     }
-    s++;
+    i++;
   }
 }
 
+void terminal_print(const char *s) {
+  int n = 0;
+  while (s[n])
+    n++;
+  terminal_printn(s, n);
+}
+
+void terminal_flush(int min_x, int max_x, int min_y, int max_y) {
+  for (int x = min_x; x < max_x; x++)
+    for (int y = min_y; y <= max_y; y++)
+      fb[x + y * 80] = screens[screen_id].buffer[x + y * 80];
+
+  int c = 0;
+  for (int i = 0; i < 9; i++) {
+    fb[c + 24 * 80] = VGA_ENTRY(' ', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+    fb[c + 1 + 24 * 80] = VGA_ENTRY(
+        '1' + i, VGA_COLOR(screen_id == i ? COLOR_LIGHT_BLUE : COLOR_LIGHT_GREY,
+                           screen_id == i ? COLOR_WHITE : COLOR_BLACK));
+    c += 2;
+  }
+  for (; c < 80; c++) {
+    fb[c + 24 * 80] = VGA_ENTRY(' ', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
+  }
+}
+
+void terminal_full_flush() { terminal_flush(0, 80, 0, 24); }
+
+extern void ft_printf(const char *fmt, ...);
+
+typedef struct int_desc_s {
+  u16 offset_1;       // offset bits 0..15
+  u16 selector;       // a code segment selector in GDT or LDT
+  u8 zero;            // unused, set to 0
+  u8 type_attributes; // gate type, dpl, and p fields
+  u16 offset_2;       // offset bits 16..31
+} int_desc_t;
+
+typedef struct __attribute__((packed)) idtp_s {
+  u16 limit;
+  u32 base;
+} idtp_t;
+
+void outb(u16 port, u8 value) {
+  asm volatile("outb %b0, %w1" ::"a"(value), "Nd"(port) : "memory");
+}
+
+u16 inb(u16 port) {
+  u8 value;
+  asm volatile("inb %w1, %b0" : "=a"(value) : "Nd"(port) : "memory");
+  return value;
+}
+
+extern void int_handler();
+
+extern void irq_ignore();
+extern void irq_keyboard();
+
+static void send_eoi() { outb(0x20, 0x20); }
+
+void exception_handler() {
+  terminal_print("exception caught !");
+  terminal_full_flush();
+}
+
+void keyboard_irq() {
+  int scancode = inb(0x60);
+
+  if (scancode >= 0x58) {
+    send_eoi();
+    return;
+  }
+
+  if (scancode >= 0x3B && scancode <= 0x43) {
+    screen_id = scancode - 0x3B;
+  } else {
+    u8 ch = scancode_table[scancode];
+    terminal_printn((char *)&ch, 1);
+  }
+
+  terminal_full_flush();
+  send_eoi();
+}
+
+int_desc_t ints[128];
+
+static void ints_init() {
+  idtp_t idtp;
+  idtp.limit = sizeof(ints) - 1;
+  idtp.base = (u32)&ints;
+
+  for (int i = 0; i < 31; i++) {
+    ints[i].offset_1 = ((u32)&int_handler) & 0xffff;
+    ints[i].offset_2 = (((u32)&int_handler) >> 16) & 0xffff;
+    ints[i].selector = 0x10;
+    ints[i].type_attributes = 0xF | (1 << 7);
+    ints[i].zero = 0;
+  }
+
+  // remap the pic
+  outb(0x20, 0x11);
+  outb(0xA0, 0x11);
+  outb(0x21, 0x20);
+  outb(0xA1, 0x28);
+  outb(0x21, 0x04);
+  outb(0xA1, 0x02);
+  outb(0x21, 0x01);
+  outb(0xA1, 0x01);
+
+  // unmask all interrupts
+  outb(0x21, 0x0);
+  outb(0xA1, 0x0);
+
+  for (int i = 32; i < 128; i++) {
+    ints[i].offset_1 = ((u32)irq_ignore) & 0xffff;
+    ints[i].offset_2 = (((u32)irq_ignore) >> 16) & 0xffff;
+    ints[i].selector = 0x10;
+    ints[i].type_attributes = 0xE | (1 << 7);
+    ints[i].zero = 0;
+  }
+
+  ints[32 + 1].offset_1 = ((u32)irq_keyboard) & 0xffff;
+  ints[32 + 1].offset_2 = (((u32)irq_keyboard) >> 16) & 0xffff;
+
+  asm volatile("lidt %0" : : "m"(idtp));
+}
+
 void kernel_main() {
-  // hello world!
-  terminal_print("42");
+  ints_init();
+
+  // clear the terminal
+  terminal_full_flush();
+
+  // enable interrupts
+  asm volatile("sti");
+
+  for (;;) {
+    asm("hlt");
+  }
 }
 

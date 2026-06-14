@@ -132,26 +132,6 @@ void terminal_set_cursor(int x, int y) {
 }
 
 static int write_int(long i, int x) {
-  // int n;
-  // char buf[32];
-  // long num;
-  // long len;
-  // long len2;
-
-  // n = 0;
-  // if (i == 0) {
-  //   buf[0] = '0';
-  //   len++;
-  // }
-  // num = i;
-  // if (i < 0)
-  //   num = -i;
-  // len = 0;
-  // while (num > 0) {
-  //   buf[len++] = "0123456789abcdef"[num % 10];
-  //   num /= 10;
-  // }
-
   if (i < 10) {
     fb[x + 24 * 80] = VGA_ENTRY('0', VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
     fb[1 + x + 24 * 80] =
@@ -162,7 +142,6 @@ static int write_int(long i, int x) {
     fb[1 + x + 24 * 80] =
         VGA_ENTRY('0' + (i % 10), VGA_COLOR(COLOR_LIGHT_GREY, COLOR_BLACK));
   }
-
   return 2;
 }
 
@@ -213,25 +192,20 @@ void terminal_flush(int min_x, int max_x, int min_y, int max_y) {
 
   c += write_int(screens[screen_id].x, c);
 
-  // c += write_int(screens[screen_id].x, c);
-  // fb[c + 24 * 80] = VGA_ENTRY(':', VGA_COLOR(color, COLOR_BLACK));
-  // c += 1;
-  // c += write_int(screens[screen_id].y, c);
-
-  terminal_set_cursor(screens[screen_id].x, screens[screen_id].y);
+  terminal_set_cursor(screens[screen_id].x, screens[screen_id].y + 1);
 }
 
 void terminal_full_flush() { terminal_flush(0, 80, 0, 24); }
 
 extern void ft_printf(const char *fmt, ...);
 
-typedef struct int_desc_s {
-  u16 offset_1;       // offset bits 0..15
-  u16 selector;       // a code segment selector in GDT or LDT
-  u8 zero;            // unused, set to 0
-  u8 type_attributes; // gate type, dpl, and p fields
-  u16 offset_2;       // offset bits 16..31
-} int_desc_t;
+typedef struct idt_desc_s {
+  u16 offset_1;
+  u16 selector;
+  u8 zero;
+  u8 type_attributes;
+  u16 offset_2;
+} idt_desc_t;
 
 typedef struct __attribute__((packed)) idtp_s {
   u16 limit;
@@ -262,14 +236,16 @@ void keyboard_irq() {
     screen_id = scancode - 0x3B;
   } else {
     u8 ch = scancode_table[scancode];
-    terminal_printn((char *)&ch, 1);
+    if (ch != 0) {
+      terminal_printn((char *)&ch, 1);
+    }
   }
 
   terminal_full_flush();
   send_eoi();
 }
 
-int_desc_t ints[128];
+idt_desc_t ints[128];
 
 static void ints_init() {
   idtp_t idtp;
@@ -316,7 +292,7 @@ void kernel_main() {
   ints_init();
 
   // clear the terminal
-  terminal_enable_cursor(0, 15);
+  terminal_enable_cursor(0, 2);
   terminal_full_flush();
 
   // enable interrupts

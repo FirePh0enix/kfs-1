@@ -192,7 +192,7 @@ void terminal_flush(int min_x, int max_x, int min_y, int max_y) {
 
   c += write_int(screens[screen_id].x, c);
 
-  terminal_set_cursor(screens[screen_id].x, screens[screen_id].y + 1);
+  terminal_set_cursor(screens[screen_id].x, screens[screen_id].y);
 }
 
 void terminal_full_flush() { terminal_flush(0, 80, 0, 24); }
@@ -291,9 +291,18 @@ static void ints_init() {
 void kernel_main() {
   ints_init();
 
+  for (u32 i = 0; i < 9; i++)
+    for (u32 x = 0; x < 80; x++)
+      for (u32 y = 0; y < 24; y++)
+        screens[i].buffer[x + y * 80] = VGA_ENTRY(' ', VGA_COLOR(bg_color, fg_color));
+
   // clear the terminal
-  terminal_enable_cursor(0, 2);
+  
+  terminal_enable_cursor(0, 15);
   terminal_full_flush();
+
+  // terminal_print("a");
+  // terminal_scroll();
 
   // enable interrupts
   asm volatile("sti");

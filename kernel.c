@@ -236,7 +236,13 @@ void keyboard_irq() {
     screen_id = scancode - 0x3B;
   } else {
     u8 ch = scancode_table[scancode];
-    if (ch != 0) {
+    if (ch == '\b') {
+      if (screens[screen_id].x > 0)
+        screens[screen_id].buffer[(screens[screen_id].x - 1) + screens[screen_id].y * 80] = VGA_ENTRY(' ', VGA_COLOR(bg_color, fg_color));
+      if (screens[screen_id].x-- == 0) {
+        screens[screen_id].x = 0;
+      }
+    } else if (ch != 0) {
       terminal_printn((char *)&ch, 1);
     }
   }
